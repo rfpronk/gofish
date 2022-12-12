@@ -595,23 +595,23 @@ func (computersystem *ComputerSystem) UnmarshalJSON(b []byte) error {
 
 	// Extract the links to other entities for later
 	computersystem.bios = t.Bios.String()
-	computersystem.processors = t.Processors.String()
-	computersystem.memory = t.Memory.String()
-	computersystem.ethernetInterfaces = t.EthernetInterfaces.String()
-	computersystem.simpleStorage = t.SimpleStorage.String()
-	computersystem.networkInterfaces = t.NetworkInterfaces.String()
-	computersystem.secureBoot = t.SecureBoot.String()
-	computersystem.storage = t.Storage.String()
-	computersystem.logServices = t.LogServices.String()
-	computersystem.memoryDomains = t.MemoryDomains.String()
-	computersystem.pcieDevices = t.PCIeDevices.ToStrings()
-	computersystem.pcieFunctions = t.PCIeFunctions.ToStrings()
-	computersystem.chassis = t.Links.Chassis.ToStrings()
-	computersystem.resetTarget = t.Actions.ComputerSystemReset.Target
-	computersystem.SupportedResetTypes = t.Actions.ComputerSystemReset.AllowedResetTypes
-	computersystem.setDefaultBootOrderTarget = t.Actions.SetDefaultBootOrder.Target
-	computersystem.ManagedBy = t.Links.ManagedBy.ToStrings()
-	computersystem.settingsApplyTimes = t.Settings.SupportedApplyTimes
+	// computersystem.processors = t.Processors.String()
+	// computersystem.memory = t.Memory.String()
+	// computersystem.ethernetInterfaces = t.EthernetInterfaces.String()
+	// computersystem.simpleStorage = t.SimpleStorage.String()
+	// computersystem.networkInterfaces = t.NetworkInterfaces.String()
+	// computersystem.secureBoot = t.SecureBoot.String()
+	// computersystem.storage = t.Storage.String()
+	// computersystem.logServices = t.LogServices.String()
+	// computersystem.memoryDomains = t.MemoryDomains.String()
+	// computersystem.pcieDevices = t.PCIeDevices.ToStrings()
+	// computersystem.pcieFunctions = t.PCIeFunctions.ToStrings()
+  computersystem.chassis = t.Links.Chassis.ToStrings()
+	// computersystem.resetTarget = t.Actions.ComputerSystemReset.Target
+	// computersystem.SupportedResetTypes = t.Actions.ComputerSystemReset.AllowedResetTypes
+	// computersystem.setDefaultBootOrderTarget = t.Actions.SetDefaultBootOrder.Target
+	// computersystem.ManagedBy = t.Links.ManagedBy.ToStrings()
+	// computersystem.settingsApplyTimes = t.Settings.SupportedApplyTimes
 
 	// Some implementations use a @Redfish.Settings object to direct settings updates to a
 	// different URL than the object being updated. Others don't, so handle both.

@@ -285,8 +285,8 @@ func (chassis *Chassis) UnmarshalJSON(b []byte) error {
 	}
 	chassis.thermal = t.Thermal.String()
 	chassis.power = t.Power.String()
-	chassis.networkAdapters = t.NetworkAdapters.String()
-	chassis.logServices = t.LogServices.String()
+	// chassis.networkAdapters = t.NetworkAdapters.String()
+	// chassis.logServices = t.LogServices.String()
 	chassis.computerSystems = t.Links.ComputerSystems.ToStrings()
 	chassis.resourceBlocks = t.Links.ResourceBlocks.ToStrings()
 	chassis.managedBy = t.Links.ManagedBy.ToStrings()
