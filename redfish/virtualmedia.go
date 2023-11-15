@@ -202,11 +202,7 @@ func (virtualmedia *VirtualMedia) EjectMedia() error {
 		return errors.New("redfish service does not support VirtualMedia.EjectMedia calls")
 	}
 
-	resp, err := virtualmedia.Client.Post(virtualmedia.ejectMediaTarget, struct{}{})
-	if err == nil {
-		defer resp.Body.Close()
-	}
-	return err
+	return virtualmedia.Post(virtualmedia.ejectMediaTarget, struct{}{})
 }
 
 // InsertMedia sends a request to insert virtual media.
@@ -215,22 +211,17 @@ func (virtualmedia *VirtualMedia) InsertMedia(image string, inserted, writeProte
 		return errors.New("redfish service does not support VirtualMedia.InsertMedia calls")
 	}
 
-	type temp struct {
+	t := struct {
 		Image          string
 		Inserted       bool
 		WriteProtected bool
-	}
-	t := temp{
+	}{
 		Image:          image,
 		Inserted:       inserted,
 		WriteProtected: writeProtected,
 	}
 
-	resp, err := virtualmedia.Client.Post(virtualmedia.insertMediaTarget, t)
-	if err == nil {
-		defer resp.Body.Close()
-	}
-	return err
+	return virtualmedia.Post(virtualmedia.insertMediaTarget, t)
 }
 
 // VirtualMediaConfig is an struct used to pass config data to build the HTTP body when inserting media
@@ -249,29 +240,14 @@ func (virtualmedia *VirtualMedia) InsertMediaConfig(config VirtualMediaConfig) e
 	if !virtualmedia.SupportsMediaInsert {
 		return errors.New("redfish service does not support VirtualMedia.InsertMedia calls")
 	}
-	resp, err := virtualmedia.Client.Post(virtualmedia.insertMediaTarget, config)
-	if err == nil {
-		defer resp.Body.Close()
-	}
-	return err
+
+	return virtualmedia.Post(virtualmedia.insertMediaTarget, config)
 }
 
 // GetVirtualMedia will get a VirtualMedia instance from the service.
 func GetVirtualMedia(c common.Client, uri string) (*VirtualMedia, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var virtualmedia VirtualMedia
-	err = json.NewDecoder(resp.Body).Decode(&virtualmedia)
-	if err != nil {
-		return nil, err
-	}
-
-	virtualmedia.SetClient(c)
-	return &virtualmedia, nil
+	var virtualMedia VirtualMedia
+	return &virtualMedia, virtualMedia.Get(c, uri, &virtualMedia)
 }
 
 // ListReferencedVirtualMedias gets the collection of VirtualMedia from
@@ -282,20 +258,35 @@ func ListReferencedVirtualMedias(c common.Client, link string) ([]*VirtualMedia,
 		return result, nil
 	}
 
-	links, err := common.GetCollection(c, link)
-	if err != nil {
-		return result, err
+	type GetResult struct {
+		Item  *VirtualMedia
+		Link  string
+		Error error
 	}
 
+	ch := make(chan GetResult)
 	collectionError := common.NewCollectionError()
-	for _, virtualmediaLink := range links.ItemLinks {
-		virtualmedia, err := GetVirtualMedia(c, virtualmediaLink)
+	get := func(link string) {
+		virtualmedia, err := GetVirtualMedia(c, link)
+		ch <- GetResult{Item: virtualmedia, Link: link, Error: err}
+	}
+
+	go func() {
+		err := common.CollectList(get, c, link)
 		if err != nil {
-			collectionError.Failures[virtualmediaLink] = err
+			collectionError.Failures[link] = err
+		}
+		close(ch)
+	}()
+
+	for r := range ch {
+		if r.Error != nil {
+			collectionError.Failures[r.Link] = r.Error
 		} else {
-			result = append(result, virtualmedia)
+			result = append(result, r.Item)
 		}
 	}
+
 	if collectionError.Empty() {
 		return result, nil
 	}

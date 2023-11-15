@@ -7,7 +7,6 @@ package redfish
 import (
 	"encoding/json"
 	"reflect"
-	"sync"
 
 	"github.com/stmcginnis/gofish/common"
 )
@@ -355,9 +354,9 @@ func (memory *Memory) UnmarshalJSON(b []byte) error {
 	*memory = Memory(t.temp)
 
 	// Extract the links to other entities for later
-	memory.assembly = string(t.Assembly)
-	memory.metrics = string(t.Metrics)
-	memory.chassis = string(t.Links.Chassis)
+	memory.assembly = t.Assembly.String()
+	memory.metrics = t.Metrics.String()
+	memory.chassis = t.Links.Chassis.String()
 
 	// This is a read/write object, so we need to save the raw object data for later
 	memory.rawData = b
@@ -387,56 +386,36 @@ func (memory *Memory) Update() error {
 
 // GetMemory will get a Memory instance from the service.
 func GetMemory(c common.Client, uri string) (*Memory, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
 	var memory Memory
-	err = json.NewDecoder(resp.Body).Decode(&memory)
-	if err != nil {
-		return nil, err
-	}
-
-	memory.SetClient(c)
-	return &memory, nil
+	return &memory, memory.Get(c, uri, &memory)
 }
 
 // ListReferencedMemorys gets the collection of Memory from
 // a provided reference.
-func ListReferencedMemorys(c common.Client, collectionLink string) ([]*Memory, error) {
+func ListReferencedMemorys(c common.Client, link string) ([]*Memory, error) { //nolint:dupl
 	var result []*Memory
-	if collectionLink == "" {
+	if link == "" {
 		return result, nil
 	}
 
-	links, err := common.GetCollection(c, collectionLink)
-	if err != nil {
-		return result, err
-	}
-
-	type GetMemoryResult struct {
+	type GetResult struct {
 		Item  *Memory
 		Link  string
 		Error error
 	}
 
-	ch := make(chan GetMemoryResult)
-	var wg sync.WaitGroup
-
+	ch := make(chan GetResult)
 	collectionError := common.NewCollectionError()
-	for _, memoryLink := range links.ItemLinks {
-		wg.Add(1)
-		go func(link string) {
-			defer wg.Done()
-			memory, err := GetMemory(c, link)
-			ch <- GetMemoryResult{Item: memory, Link: link, Error: err}
-		}(memoryLink)
+	get := func(link string) {
+		memory, err := GetMemory(c, link)
+		ch <- GetResult{Item: memory, Link: link, Error: err}
 	}
 
 	go func() {
-		wg.Wait()
+		err := common.CollectList(get, c, link)
+		if err != nil {
+			collectionError.Failures[link] = err
+		}
 		close(ch)
 	}()
 
@@ -460,7 +439,7 @@ func (memory *Memory) Assembly() (*Assembly, error) {
 	if memory.assembly == "" {
 		return nil, nil
 	}
-	return GetAssembly(memory.Client, memory.assembly)
+	return GetAssembly(memory.GetClient(), memory.assembly)
 }
 
 // Metrics gets the memory metrics.
@@ -468,7 +447,7 @@ func (memory *Memory) Metrics() (*MemoryMetrics, error) {
 	if memory.metrics == "" {
 		return nil, nil
 	}
-	return GetMemoryMetrics(memory.Client, memory.metrics)
+	return GetMemoryMetrics(memory.GetClient(), memory.metrics)
 }
 
 // Chassis gets the containing chassis of this memory.
@@ -476,7 +455,7 @@ func (memory *Memory) Chassis() (*Chassis, error) {
 	if memory.chassis == "" {
 		return nil, nil
 	}
-	return GetChassis(memory.Client, memory.chassis)
+	return GetChassis(memory.GetClient(), memory.chassis)
 }
 
 // MemoryLocation shall contain properties which describe the Memory connection

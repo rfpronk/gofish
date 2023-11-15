@@ -7,12 +7,14 @@ package common
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 )
 
 // Collection represents a collection of entity references.
 type Collection struct {
-	Name      string `json:"Name"`
-	ItemLinks []string
+	Name            string `json:"Name"`
+	ItemLinks       []string
+	MembersNextLink string `json:"Members@odata.nextLink,omitempty"`
 }
 
 // UnmarshalJSON unmarshals a collection from the raw JSON.
@@ -36,7 +38,7 @@ func (c *Collection) UnmarshalJSON(b []byte) error {
 
 	// Swordfish has them at the root
 	if len(c.ItemLinks) == 0 &&
-		(t.Count > 0 || t.ODataCount > 0) {
+		(t.Count > 0 || t.ODataCount > 0 || len(t.Members) > 0) {
 		c.ItemLinks = t.Members.ToStrings()
 	}
 
@@ -97,4 +99,42 @@ func (cr *CollectionError) Error() string {
 	}
 
 	return fmt.Sprintf("failed to retrieve some items: %s", errorsJSON)
+}
+
+// CollectList will retrieve a collection of entities from the Redfish service.
+func CollectList(get func(string), c Client, link string) error {
+	collection, err := GetCollection(c, link)
+	if err != nil {
+		return err
+	}
+
+	CollectCollection(get, collection.ItemLinks)
+	if collection.MembersNextLink != "" {
+		err := CollectList(get, c, collection.MembersNextLink)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// CollectCollection will retrieve a collection of entitied from the Redfish service
+// when you already have the set of individual links in the collection.
+func CollectCollection(get func(string), links []string) {
+	// Only allow three concurrent requests to avoid overwhelming the service
+	limiter := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+
+	for _, itemLink := range links {
+		wg.Add(1)
+		limiter <- struct{}{}
+
+		go func(itemLink string) {
+			defer wg.Done()
+			get(itemLink)
+			<-limiter
+		}(itemLink)
+	}
+
+	wg.Wait()
 }

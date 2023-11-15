@@ -15,9 +15,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httputil"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 
 	"strings"
 	"time"
@@ -46,6 +48,9 @@ type APIClient struct {
 
 	// Auth information saved for later to be able to log out
 	auth *redfish.AuthToken
+
+	// mu used to lock requests
+	mu *sync.Mutex
 
 	// dumpWriter will receive HTTP dumps if non-nil.
 	dumpWriter io.Writer
@@ -100,6 +105,7 @@ func setupClientWithConfig(ctx context.Context, config *ClientConfig) (c *APICli
 		endpoint:   config.Endpoint,
 		dumpWriter: config.DumpWriter,
 		ctx:        ctx,
+		mu:         &sync.Mutex{},
 	}
 
 	if config.TLSHandshakeTimeout == 0 {
@@ -142,6 +148,7 @@ func setupClientWithEndpoint(ctx context.Context, endpoint string) (c *APIClient
 	client := &APIClient{
 		endpoint: endpoint,
 		ctx:      ctx,
+		mu:       &sync.Mutex{},
 	}
 	client.HTTPClient = &http.Client{}
 
@@ -369,7 +376,7 @@ func (c *APIClient) runRequestWithMultipartPayloadWithHeaders(method, url string
 			}
 		} else {
 			// Add other fields
-			if partWriter, err = payloadWriter.CreateFormField(key); err != nil {
+			if partWriter, err = createFormField(key, payloadWriter); err != nil {
 				return nil, err
 			}
 		}
@@ -380,6 +387,21 @@ func (c *APIClient) runRequestWithMultipartPayloadWithHeaders(method, url string
 	payloadWriter.Close()
 
 	return c.runRawRequestWithHeaders(method, url, bytes.NewReader(payloadBuffer.Bytes()), payloadWriter.FormDataContentType(), customHeaders)
+}
+
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+
+func escapeQuotes(s string) string {
+	return quoteEscaper.Replace(s)
+}
+
+// createFormField create form field with Content-Type
+func createFormField(fieldname string, w *multipart.Writer) (io.Writer, error) {
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition",
+		fmt.Sprintf(`form-data; name=%q`, escapeQuotes(fieldname)))
+	h.Set("Content-Type", "application/json")
+	return w.CreatePart(h)
 }
 
 // runRawRequest actually performs the REST calls
@@ -417,7 +439,7 @@ func (c *APIClient) runRawRequestWithHeaders(method, url string, payloadBuffer i
 		// Set Content-Length custom headers on the request
 		// since its ignored when set using Header.Set()
 		if strings.EqualFold("Content-Length", k) {
-			req.ContentLength, err = strconv.ParseInt(v, 10, 64) //nolint:gomnd // base 10, 64 bit
+			req.ContentLength, err = strconv.ParseInt(v, 10, 64) // base 10, 64 bit
 			if err != nil {
 				return nil, common.ConstructError(0, []byte("error parsing custom Content-Length header"))
 			}
@@ -450,8 +472,9 @@ func (c *APIClient) runRawRequestWithHeaders(method, url string, payloadBuffer i
 			return nil, err
 		}
 	}
-
+	c.mu.Lock()
 	resp, err := c.HTTPClient.Do(req)
+	c.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}

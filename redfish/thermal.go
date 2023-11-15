@@ -131,7 +131,7 @@ func (fan *Fan) UnmarshalJSON(b []byte) error {
 
 	// Extract the links to other entities for later
 	*fan = Fan(t.temp)
-	fan.assembly = string(t.Assembly)
+	fan.assembly = t.Assembly.String()
 
 	if t.FanName != "" {
 		fan.Name = t.FanName
@@ -334,20 +334,8 @@ func (thermal *Thermal) UnmarshalJSON(b []byte) error {
 
 // GetThermal will get a Thermal instance from the service.
 func GetThermal(c common.Client, uri string) (*Thermal, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
 	var thermal Thermal
-	err = json.NewDecoder(resp.Body).Decode(&thermal)
-	if err != nil {
-		return nil, err
-	}
-
-	thermal.SetClient(c)
-	return &thermal, nil
+	return &thermal, thermal.Get(c, uri, &thermal)
 }
 
 // ListReferencedThermals gets the collection of Thermal from a provided reference.
@@ -357,18 +345,32 @@ func ListReferencedThermals(c common.Client, link string) ([]*Thermal, error) { 
 		return result, nil
 	}
 
-	links, err := common.GetCollection(c, link)
-	if err != nil {
-		return result, err
+	type GetResult struct {
+		Item  *Thermal
+		Link  string
+		Error error
 	}
 
+	ch := make(chan GetResult)
 	collectionError := common.NewCollectionError()
-	for _, thermalLink := range links.ItemLinks {
-		thermal, err := GetThermal(c, thermalLink)
+	get := func(link string) {
+		thermal, err := GetThermal(c, link)
+		ch <- GetResult{Item: thermal, Link: link, Error: err}
+	}
+
+	go func() {
+		err := common.CollectList(get, c, link)
 		if err != nil {
-			collectionError.Failures[thermalLink] = err
+			collectionError.Failures[link] = err
+		}
+		close(ch)
+	}()
+
+	for r := range ch {
+		if r.Error != nil {
+			collectionError.Failures[r.Link] = r.Error
 		} else {
-			result = append(result, thermal)
+			result = append(result, r.Item)
 		}
 	}
 

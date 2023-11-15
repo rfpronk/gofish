@@ -71,8 +71,8 @@ func (updateService *UpdateService) UnmarshalJSON(b []byte) error {
 
 	// Extract the links to other entities for later
 	*updateService = UpdateService(t.temp)
-	updateService.FirmwareInventory = string(t.FirmwareInventory)
-	updateService.SoftwareInventory = string(t.SoftwareInventory)
+	updateService.FirmwareInventory = t.FirmwareInventory.String()
+	updateService.SoftwareInventory = t.SoftwareInventory.String()
 	updateService.TransferProtocol = t.Actions.SimpleUpdate.AllowableValues
 	updateService.UpdateServiceTarget = t.Actions.SimpleUpdate.Target
 	updateService.OemActions = t.Actions.Oem
@@ -83,26 +83,16 @@ func (updateService *UpdateService) UnmarshalJSON(b []byte) error {
 
 // GetUpdateService will get a UpdateService instance from the service.
 func GetUpdateService(c common.Client, uri string) (*UpdateService, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
 	var updateService UpdateService
-	err = json.NewDecoder(resp.Body).Decode(&updateService)
-	if err != nil {
-		return nil, err
-	}
-	updateService.SetClient(c)
-	return &updateService, nil
+	return &updateService, updateService.Get(c, uri, &updateService)
 }
 
 // SoftwareInventories gets the collection of software inventories of this update service
 func (updateService *UpdateService) SoftwareInventories() ([]*SoftwareInventory, error) {
-	return ListReferencedSoftwareInventories(updateService.Client, updateService.SoftwareInventory)
+	return ListReferencedSoftwareInventories(updateService.GetClient(), updateService.SoftwareInventory)
 }
 
 // FirmwareInventories gets the collection of firmware inventories of this update service
 func (updateService *UpdateService) FirmwareInventories() ([]*SoftwareInventory, error) {
-	return ListReferencedSoftwareInventories(updateService.Client, updateService.FirmwareInventory)
+	return ListReferencedSoftwareInventories(updateService.GetClient(), updateService.FirmwareInventory)
 }

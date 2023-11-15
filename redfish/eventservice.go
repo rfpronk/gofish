@@ -195,7 +195,7 @@ func (eventservice *EventService) UnmarshalJSON(b []byte) error {
 	// Extract the links to other entities for later
 	*eventservice = EventService(t.temp)
 	// Need to make these publicly available for OEM versions to access
-	eventservice.Subscriptions = string(t.Subscriptions)
+	eventservice.Subscriptions = t.Subscriptions.String()
 	eventservice.SubmitTestEventTarget = t.Actions.SubmitTestEvent.Target
 
 	// This is a read/write object, so we need to save the raw object data for later
@@ -228,20 +228,8 @@ func (eventservice *EventService) Update() error {
 
 // GetEventService will get a EventService instance from the service.
 func GetEventService(c common.Client, uri string) (*EventService, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var eventservice EventService
-	err = json.NewDecoder(resp.Body).Decode(&eventservice)
-	if err != nil {
-		return nil, err
-	}
-
-	eventservice.SetClient(c)
-	return &eventservice, nil
+	var eventService EventService
+	return &eventService, eventService.Get(c, uri, &eventService)
 }
 
 // ListReferencedEventServices gets the collection of EventService from
@@ -252,18 +240,32 @@ func ListReferencedEventServices(c common.Client, link string) ([]*EventService,
 		return result, nil
 	}
 
-	links, err := common.GetCollection(c, link)
-	if err != nil {
-		return result, err
+	type GetResult struct {
+		Item  *EventService
+		Link  string
+		Error error
 	}
 
+	ch := make(chan GetResult)
 	collectionError := common.NewCollectionError()
-	for _, eventserviceLink := range links.ItemLinks {
-		eventservice, err := GetEventService(c, eventserviceLink)
+	get := func(link string) {
+		eventservice, err := GetEventService(c, link)
+		ch <- GetResult{Item: eventservice, Link: link, Error: err}
+	}
+
+	go func() {
+		err := common.CollectList(get, c, link)
 		if err != nil {
-			collectionError.Failures[eventserviceLink] = err
+			collectionError.Failures[link] = err
+		}
+		close(ch)
+	}()
+
+	for r := range ch {
+		if r.Error != nil {
+			collectionError.Failures[r.Link] = r.Error
 		} else {
-			result = append(result, eventservice)
+			result = append(result, r.Item)
 		}
 	}
 
@@ -280,12 +282,12 @@ func (eventservice *EventService) GetEventSubscriptions() ([]*EventDestination, 
 		return nil, fmt.Errorf("empty subscription link in the event service")
 	}
 
-	return ListReferencedEventDestinations(eventservice.Client, eventservice.Subscriptions)
+	return ListReferencedEventDestinations(eventservice.GetClient(), eventservice.Subscriptions)
 }
 
 // GetEventSubscription gets a specific subscription using the event service.
 func (eventservice *EventService) GetEventSubscription(uri string) (*EventDestination, error) {
-	return GetEventDestination(eventservice.Client, uri)
+	return GetEventDestination(eventservice.GetClient(), uri)
 }
 
 // CreateEventSubscription creates the subscription using the event service.
@@ -300,6 +302,9 @@ func (eventservice *EventService) GetEventSubscription(uri string) (*EventDestin
 // it should contain the vendor specific struct that goes inside the Oem session.
 // It returns the new subscription URI if the event subscription is created
 // with success or any error encountered.
+
+// Deprecated: (v1.5) EventType-based eventing is DEPRECATED in the Redfish schema
+// in favor of using RegistryPrefix and ResourceTypes
 func (eventservice *EventService) CreateEventSubscription(
 	destination string,
 	eventTypes []EventType,
@@ -313,7 +318,7 @@ func (eventservice *EventService) CreateEventSubscription(
 	}
 
 	return CreateEventDestination(
-		eventservice.Client,
+		eventservice.GetClient(),
 		eventservice.Subscriptions,
 		destination,
 		eventTypes,
@@ -324,9 +329,56 @@ func (eventservice *EventService) CreateEventSubscription(
 	)
 }
 
+// For Redfish v1.5+
+// CreateEventSubscription creates the subscription using the event service.
+// Destination should contain the URL of the destination for events to be sent.
+// RegistryPrefixes is the list of the prefixes for the Message Registries
+// that contain the MessageIds that are sent to this event destination.
+// If RegistryPrefixes is empty on subscription, the client is subscribing to all Message Registries.
+// ResourceTypes is the list of Resource Type values (Schema names) that correspond to the OriginOfCondition,
+// the version and full namespace should not be specified.
+// If ResourceTypes is empty on subscription, the client is subscribing to receive events regardless of ResourceType.
+// HttpHeaders is optional and gives the opportunity to specify any arbitrary
+// HTTP headers required for the event POST operation.
+// Protocol should be the communication protocol of the event endpoint, usually RedfishEventDestinationProtocol.
+// Context is a required client-supplied string that is sent with the event notifications.
+// DeliveryRetryPolicy is optional, it should contain the subscription delivery retry policy for events,
+// where the subscription type is RedfishEvent.
+// Oem is optional and gives the opportunity to specify any OEM specific properties,
+// it should contain the vendor specific struct that goes inside the Oem session.
+// It returns the new subscription URI if the event subscription is created
+// with success or any error encountered.
+func (eventservice *EventService) CreateEventSubscriptionInstance(
+	destination string,
+	registryPrefixes []string,
+	resourceTypes []string,
+	httpHeaders map[string]string,
+	protocol EventDestinationProtocol,
+	context string,
+	deliveryRetryPolicy DeliveryRetryPolicy,
+	oem interface{},
+) (string, error) {
+	if strings.TrimSpace(eventservice.Subscriptions) == "" {
+		return "", fmt.Errorf("empty subscription link in the event service")
+	}
+
+	return CreateEventDestinationInstance(
+		eventservice.GetClient(),
+		eventservice.Subscriptions,
+		destination,
+		registryPrefixes,
+		resourceTypes,
+		httpHeaders,
+		protocol,
+		context,
+		deliveryRetryPolicy,
+		oem,
+	)
+}
+
 // DeleteEventSubscription deletes a specific subscription using the event service.
 func (eventservice *EventService) DeleteEventSubscription(uri string) error {
-	return DeleteEventDestination(eventservice.Client, uri)
+	return DeleteEventDestination(eventservice.GetClient(), uri)
 }
 
 // SubmitTestEvent shall add a test event to the event service with the event
@@ -337,8 +389,8 @@ func (eventservice *EventService) SubmitTestEvent(message string) error {
 		EventGroupID      string `json:"EventGroupId"`
 		EventID           string `json:"EventId"`
 		EventTimestamp    string
-		EventType         string
-		Message           string
+		EventType         string `json:"EventType,omitempty"`
+		Message           string `json:"Message,omitempty"`
 		MessageArgs       []string
 		MessageID         string `json:"MessageId"`
 		OriginOfCondition string
@@ -355,11 +407,7 @@ func (eventservice *EventService) SubmitTestEvent(message string) error {
 		Severity:          "Informational",
 	}
 
-	resp, err := eventservice.Client.Post(eventservice.SubmitTestEventTarget, t)
-	if err == nil {
-		defer resp.Body.Close()
-	}
-	return err
+	return eventservice.Post(eventservice.SubmitTestEventTarget, t)
 }
 
 // SSEFilterPropertiesSupported shall contain a set of properties that indicate

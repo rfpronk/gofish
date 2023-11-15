@@ -87,20 +87,8 @@ func (classofservice *ClassOfService) UnmarshalJSON(b []byte) error {
 
 // GetClassOfService will get a ClassOfService instance from the service.
 func GetClassOfService(c common.Client, uri string) (*ClassOfService, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var classofservice ClassOfService
-	err = json.NewDecoder(resp.Body).Decode(&classofservice)
-	if err != nil {
-		return nil, err
-	}
-
-	classofservice.SetClient(c)
-	return &classofservice, nil
+	var classOfService ClassOfService
+	return &classOfService, classOfService.Get(c, uri, &classOfService)
 }
 
 // ListReferencedClassOfServices gets the collection of ClassOfService from
@@ -111,18 +99,32 @@ func ListReferencedClassOfServices(c common.Client, link string) ([]*ClassOfServ
 		return result, nil
 	}
 
-	links, err := common.GetCollection(c, link)
-	if err != nil {
-		return result, err
+	type GetResult struct {
+		Item  *ClassOfService
+		Link  string
+		Error error
 	}
 
+	ch := make(chan GetResult)
 	collectionError := common.NewCollectionError()
-	for _, classofserviceLink := range links.ItemLinks {
-		classofservice, err := GetClassOfService(c, classofserviceLink)
+	get := func(link string) {
+		classofservice, err := GetClassOfService(c, link)
+		ch <- GetResult{Item: classofservice, Link: link, Error: err}
+	}
+
+	go func() {
+		err := common.CollectList(get, c, link)
 		if err != nil {
-			collectionError.Failures[classofserviceLink] = err
+			collectionError.Failures[link] = err
+		}
+		close(ch)
+	}()
+
+	for r := range ch {
+		if r.Error != nil {
+			collectionError.Failures[r.Link] = r.Error
 		} else {
-			result = append(result, classofservice)
+			result = append(result, r.Item)
 		}
 	}
 
@@ -140,7 +142,7 @@ func (classofservice *ClassOfService) DataProtectionLinesOfServices() ([]*DataPr
 
 	collectionError := common.NewCollectionError()
 	for _, dpLosLink := range classofservice.dataProtectionLinesOfService {
-		dpLos, err := GetDataProtectionLineOfService(classofservice.Client, dpLosLink)
+		dpLos, err := GetDataProtectionLineOfService(classofservice.GetClient(), dpLosLink)
 		if err != nil {
 			collectionError.Failures[dpLosLink] = err
 		} else {
@@ -162,7 +164,7 @@ func (classofservice *ClassOfService) DataSecurityLinesOfServices() ([]*DataSecu
 
 	collectionError := common.NewCollectionError()
 	for _, dsLosLink := range classofservice.dataSecurityLinesOfService {
-		dsLos, err := GetDataSecurityLineOfService(classofservice.Client, dsLosLink)
+		dsLos, err := GetDataSecurityLineOfService(classofservice.GetClient(), dsLosLink)
 		if err != nil {
 			collectionError.Failures[dsLosLink] = err
 		} else {
@@ -184,7 +186,7 @@ func (classofservice *ClassOfService) DataStorageLinesOfServices() ([]*DataStora
 
 	collectionError := common.NewCollectionError()
 	for _, dsLosLink := range classofservice.dataStorageLinesOfService {
-		dsLos, err := GetDataStorageLineOfService(classofservice.Client, dsLosLink)
+		dsLos, err := GetDataStorageLineOfService(classofservice.GetClient(), dsLosLink)
 		if err != nil {
 			collectionError.Failures[dsLosLink] = err
 		} else {
@@ -206,7 +208,7 @@ func (classofservice *ClassOfService) IOConnectivityLinesOfServices() ([]*IOConn
 
 	collectionError := common.NewCollectionError()
 	for _, ioLosLink := range classofservice.dataSecurityLinesOfService {
-		ioLos, err := GetIOConnectivityLineOfService(classofservice.Client, ioLosLink)
+		ioLos, err := GetIOConnectivityLineOfService(classofservice.GetClient(), ioLosLink)
 		if err != nil {
 			collectionError.Failures[ioLosLink] = err
 		} else {
@@ -228,7 +230,7 @@ func (classofservice *ClassOfService) IOPerformanceLinesOfServices() ([]*IOPerfo
 
 	collectionError := common.NewCollectionError()
 	for _, ioLosLink := range classofservice.dataSecurityLinesOfService {
-		ioLos, err := GetIOPerformanceLineOfService(classofservice.Client, ioLosLink)
+		ioLos, err := GetIOPerformanceLineOfService(classofservice.GetClient(), ioLosLink)
 		if err != nil {
 			collectionError.Failures[ioLosLink] = err
 		} else {

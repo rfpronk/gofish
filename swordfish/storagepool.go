@@ -8,9 +8,8 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"github.com/stmcginnis/gofish/redfish"
-
 	"github.com/stmcginnis/gofish/common"
+	"github.com/stmcginnis/gofish/redfish"
 )
 
 // StoragePool is a container of data storage capable of providing
@@ -130,11 +129,11 @@ func (storagepool *StoragePool) UnmarshalJSON(b []byte) error {
 	storagepool.DedicatedSpareDrivesCount = t.Links.DedicatedSpareDrivesCount
 	storagepool.spareResourceSets = t.Links.SpareResourceSets.ToStrings()
 	storagepool.SpareResourceSetsCount = t.Links.SpareResourceSetsCount
-	storagepool.allocatedPools = string(t.AllocatedPools)
-	storagepool.allocatedVolumes = string(t.AllocatedVolumes)
+	storagepool.allocatedPools = t.AllocatedPools.String()
+	storagepool.allocatedVolumes = t.AllocatedVolumes.String()
 	storagepool.capacitySources = t.CapacitySource.ToStrings()
-	storagepool.classesOfService = string(t.ClassesOfService)
-	storagepool.defaultClassOfService = string(t.DefaultClassOfService)
+	storagepool.classesOfService = t.ClassesOfService.String()
+	storagepool.defaultClassOfService = t.DefaultClassOfService.String()
 
 	// This is a read/write object, so we need to save the raw object data for later
 	storagepool.rawData = b
@@ -172,20 +171,8 @@ func (storagepool *StoragePool) Update() error {
 
 // GetStoragePool will get a StoragePool instance from the service.
 func GetStoragePool(c common.Client, uri string) (*StoragePool, error) {
-	resp, err := c.Get(uri)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var storagepool StoragePool
-	err = json.NewDecoder(resp.Body).Decode(&storagepool)
-	if err != nil {
-		return nil, err
-	}
-
-	storagepool.SetClient(c)
-	return &storagepool, nil
+	var storagePool StoragePool
+	return &storagePool, storagePool.Get(c, uri, &storagePool)
 }
 
 // ListReferencedStoragePools gets the collection of StoragePool from
@@ -196,18 +183,32 @@ func ListReferencedStoragePools(c common.Client, link string) ([]*StoragePool, e
 		return result, nil
 	}
 
-	links, err := common.GetCollection(c, link)
-	if err != nil {
-		return result, err
+	type GetResult struct {
+		Item  *StoragePool
+		Link  string
+		Error error
 	}
 
+	ch := make(chan GetResult)
 	collectionError := common.NewCollectionError()
-	for _, storagepoolLink := range links.ItemLinks {
-		storagepool, err := GetStoragePool(c, storagepoolLink)
+	get := func(link string) {
+		storagepool, err := GetStoragePool(c, link)
+		ch <- GetResult{Item: storagepool, Link: link, Error: err}
+	}
+
+	go func() {
+		err := common.CollectList(get, c, link)
 		if err != nil {
-			collectionError.Failures[storagepoolLink] = err
+			collectionError.Failures[link] = err
+		}
+		close(ch)
+	}()
+
+	for r := range ch {
+		if r.Error != nil {
+			collectionError.Failures[r.Link] = r.Error
 		} else {
-			result = append(result, storagepool)
+			result = append(result, r.Item)
 		}
 	}
 
@@ -225,7 +226,7 @@ func (storagepool *StoragePool) DedicatedSpareDrives() ([]*redfish.Drive, error)
 
 	collectionError := common.NewCollectionError()
 	for _, driveLink := range storagepool.dedicatedSpareDrives {
-		drive, err := redfish.GetDrive(storagepool.Client, driveLink)
+		drive, err := redfish.GetDrive(storagepool.GetClient(), driveLink)
 		if err != nil {
 			collectionError.Failures[driveLink] = err
 		} else {
@@ -247,7 +248,7 @@ func (storagepool *StoragePool) SpareResourceSets() ([]*SpareResourceSet, error)
 
 	collectionError := common.NewCollectionError()
 	for _, srsLink := range storagepool.spareResourceSets {
-		srs, err := GetSpareResourceSet(storagepool.Client, srsLink)
+		srs, err := GetSpareResourceSet(storagepool.GetClient(), srsLink)
 		if err != nil {
 			collectionError.Failures[srsLink] = err
 		} else {
@@ -264,12 +265,12 @@ func (storagepool *StoragePool) SpareResourceSets() ([]*SpareResourceSet, error)
 
 // AllocatedPools gets the storage pools allocated from this storage pool.
 func (storagepool *StoragePool) AllocatedPools() ([]*StoragePool, error) {
-	return ListReferencedStoragePools(storagepool.Client, storagepool.allocatedPools)
+	return ListReferencedStoragePools(storagepool.GetClient(), storagepool.allocatedPools)
 }
 
 // AllocatedVolumes gets the volumes allocated from this storage pool.
 func (storagepool *StoragePool) AllocatedVolumes() ([]*Volume, error) {
-	return ListReferencedVolumes(storagepool.Client, storagepool.allocatedVolumes)
+	return ListReferencedVolumes(storagepool.GetClient(), storagepool.allocatedVolumes)
 }
 
 // CapacitySources gets space allocations to this pool.
@@ -278,7 +279,7 @@ func (storagepool *StoragePool) CapacitySources() ([]*CapacitySource, error) {
 
 	collectionError := common.NewCollectionError()
 	for _, capLink := range storagepool.capacitySources {
-		capacity, err := GetCapacitySource(storagepool.Client, capLink)
+		capacity, err := GetCapacitySource(storagepool.GetClient(), capLink)
 		if err != nil {
 			collectionError.Failures[capLink] = err
 		} else {
@@ -297,7 +298,7 @@ func (storagepool *StoragePool) CapacitySources() ([]*CapacitySource, error) {
 // storage pool. Capacity allocated from this storage pool shall conform to one
 // of the referenced classes of service.
 func (storagepool *StoragePool) ClassesOfService() ([]*ClassOfService, error) {
-	return ListReferencedClassOfServices(storagepool.Client, storagepool.classesOfService)
+	return ListReferencedClassOfServices(storagepool.GetClient(), storagepool.classesOfService)
 }
 
 // DefaultClassOfService gets the default ClassOfService for this pool.
@@ -305,5 +306,5 @@ func (storagepool *StoragePool) DefaultClassOfService() (*ClassOfService, error)
 	if storagepool.defaultClassOfService == "" {
 		return nil, nil
 	}
-	return GetClassOfService(storagepool.Client, storagepool.defaultClassOfService)
+	return GetClassOfService(storagepool.GetClient(), storagepool.defaultClassOfService)
 }
